@@ -8,6 +8,7 @@
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
+#include <map>
 #include <algorithm>
 
 
@@ -61,18 +62,25 @@ int color_edges(std::vector<Edge>& all_edges, std::unordered_map<std::string, st
     for (const auto& p : adj) {
         max_degree = std::max(max_degree, static_cast<int>(p.second.size()));
     }
+
+    std::map<std::pair<std::string, std::string>, Edge*> edge_map;
+    for(auto &ed: all_edges) {
+        edge_map[{ed.u, ed.w}] = &ed;
+    }
+
     for (int col = 0; col < max_degree; ++col) {
         std::unordered_map<std::string, std::string> matchU, matchW;
         bipartite_matching(U, adj, matchU, matchW);
         for (const auto& p : matchU) {
             std::string u = p.first;
             std::string w = p.second;
-            for (auto& e : all_edges) {
-                if (e.u == u && e.w == w) {
-                    e.color = col;
-                    break;
-                }
-            }
+            // for (auto& e : all_edges) {
+            //     if (e.u == u && e.w == w) {
+            //         e.color = col;
+            //         break;
+            //     }
+            // }
+            edge_map[{u, w}]->color = col;
             // Remove the edge from adj
             std::vector<std::string>& neighbors_u = adj[u];
             neighbors_u.erase(std::remove(neighbors_u.begin(), neighbors_u.end(), w), neighbors_u.end());
