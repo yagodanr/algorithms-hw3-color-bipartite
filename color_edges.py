@@ -10,26 +10,22 @@ import time
 from typing import Dict
 import networkx as nx
 import sys
-from networkx.algorithms.bipartite.matching import hopcroft_karp_matching
 
 
 
 
 
 
-def bipartite_matching(U, adj, matchU, matchW):
+def bipartite_matching(U, W, adj, matchU, matchW):
     G = nx.Graph()
-    W_computed = set()
+
     for u in U:
         if u in adj:
             for w in adj[u]:
-                W_computed.add(w)
                 G.add_edge(u, w)
     G.add_nodes_from(U, bipartite=0)
-    G.add_nodes_from(W_computed, bipartite=1)
-    matching = hopcroft_karp_matching(G, top_nodes=U)
-    matchU.clear()
-    matchW.clear()
+    G.add_nodes_from(W, bipartite=1)
+    matching = nx.bipartite.maximum_matching(G, top_nodes=U)
     count = 0
     for u in U:
         if u in matching:
@@ -39,27 +35,72 @@ def bipartite_matching(U, adj, matchU, matchW):
             count += 1
     return count
 
-def color_edges(all_edges, adj, U, W):
+def regularize_bipartite(adj, U, W):
+    # Compute Δ
+    U = set(U)
+    W = set(W)
+    degrees = {v: len(adj.get(v, [])) for v in U | W}
+    Delta = max(degrees.values(), default=0)
+
+    U = set(U)
+    W = set(W)
+    adj = {v: list(adj.get(v, [])) for v in U | W}
+
+    # Compute deficits
+    defU = []
+    defW = []
+
+    for u in U:
+        defU.extend([u] * (Delta - len(adj[u])))
+    for w in W:
+        defW.extend([w] * (Delta - len(adj[w])))
+
+    # Balance sides with dummy vertices
+    dummy_id = 0
+    while len(defU) < len(defW):
+        du = f"_dummyU_{dummy_id}"
+        dummy_id += 1
+        U.add(du)
+        adj[du] = []
+        defU.extend([du] * Delta)
+
+    while len(defW) < len(defU):
+        dw = f"_dummyW_{dummy_id}"
+        dummy_id += 1
+        W.add(dw)
+        adj[dw] = []
+        defW.extend([dw] * Delta)
+
+    # Add dummy edges
+    for u, w in zip(defU, defW):
+        adj[u].append(w)
+        adj[w].append(u)
+
+    return adj, U, W, Delta
+
+
+def color_edges(all_edges: list[(str, str)], adj: dict[str: list[str]], U: set[str], W: set[str]):
     # for bipartite graph minimum number of colors is maximum degree
     max_degree = 0
-    original_keys = set(all_edges)
     edge_color = {}
-    if adj:
-        max_degree = max(len(neighbors) for neighbors in adj.values())
+    U = sorted(U, key=lambda u: len(adj[u]))
+    adj_dum, U_dum, W_dum, _ = regularize_bipartite(adj, U, W)
+    if adj_dum:
+        max_degree = max(len(neighbors) for neighbors in adj_dum.values())
     for color in range(max_degree+1):
         matchU = {}
         matchW = {}
-        bipartite_matching(U, adj, matchU, matchW)
+        bipartite_matching(U_dum, W_dum, adj_dum, matchU, matchW)
         for u, w in matchU.items():
             # Always store in (u,w) order
-            key = (u, w) if (u, w) in original_keys else (w, u)
+            key = (u, w)
 
-            edge_color[key] = color
-            # Remove the edge from adj
-            if u in adj:
-                adj[u].remove(w)
-            if w in adj:
-                adj[w].remove(u)
+            # Remove the edge from adj_dum
+            adj_dum[u].remove(w)
+            adj_dum[w].remove(u)
+
+            if u in U and w in W:
+                edge_color[key] = color
     return max_degree, edge_color
 
 
