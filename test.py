@@ -48,7 +48,7 @@ def generate_test_graph(n_u: int, n_w: int, graph_type: str = "random",
         cmd.extend(["--probability", str(probability)])
 
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd)
         print(f"  Generated graph: U={n_u}, W={n_w}, type={graph_type}")
         return output
     except subprocess.CalledProcessError as e:
@@ -59,8 +59,8 @@ def generate_test_graph(n_u: int, n_w: int, graph_type: str = "random",
 
 def function_1(input_path: str, output_path: str):
     """C++ implementation."""
-    subprocess.run([CPP_EXECUTABLE_PATH, input_path, output_path],
-                   check=True, capture_output=True)
+    subprocess.run([CPP_EXECUTABLE_PATH, input_path, output_path])
+
 
 
 def function_2(input_path: str, output_path: str):
