@@ -63,7 +63,7 @@ bool bfs(const std::unordered_set<std::string>& U,
                     }
 
                     // If matched vertex hasn't been visited
-                    if (dist[matchedU] == INF) {
+                    if (!dist.count(matchedU) || dist[matchedU] == INF) {
                         dist[matchedU] = dist[u] + 1;
                         if (matchedU != "NIL") {
                             q.push(matchedU);
@@ -101,7 +101,7 @@ bool dfs(const std::string& u,
             }
 
             // Check if this edge is in the level graph and we can augment
-            if (dist[matchedU] == dist[u] + 1) {
+            if (dist.count(matchedU) && dist[matchedU] == dist[u] + 1) {
                 if (dfs(matchedU, adj, matchU, matchW, dist)) {
                     // Augment the matching
                     matchU[u] = w;
@@ -150,45 +150,158 @@ void regularize_bipartite(
     std::unordered_set<std::string>& W,
     int& Delta
 ) {
-    // Compute Δ
+    // Step 1: Compute Δ - maximum degree
     Delta = 0;
-    for (const auto& p : adj)
-        Delta = std::max(Delta, (int)p.second.size());
+    std::unordered_map<std::string, int> degreeU, degreeW;
 
-    // Degree deficits
-    std::vector<std::string> defU, defW;
+    for (const auto& u : U) {
+        degreeU[u] = adj.count(u) ? adj[u].size() : 0;
+        Delta = std::max(Delta, degreeU[u]);
+    }
 
-    for (const auto& u : U)
-        defU.insert(defU.end(), Delta - adj[u].size(), u);
+    for (const auto& w : W) {
+        degreeW[w] = 0;
+    }
 
-    for (const auto& w : W)
-        defW.insert(defW.end(), Delta - adj[w].size(), w);
+    for (const auto& u : U) {
+        if (adj.count(u)) {
+            for (const auto& w : adj[u]) {
+                degreeW[w]++;
+            }
+        }
+    }
+
+    for (const auto& p : degreeW) {
+        Delta = std::max(Delta, p.second);
+    }
+
+    // Step 2: Calculate deficits for real vertices
+    int deficitU = 0;
+    int deficitW = 0;
+
+    for (const auto& u : U) {
+        deficitU += Delta - degreeU[u];
+    }
+
+    for (const auto& w : W) {
+        deficitW += Delta - degreeW[w];
+    }
+
+    // Step 3: Add dummy vertices to balance AND provide edges
+    // We need enough dummies so that:
+    // - Total deficit on each side can be satisfied
+    // - Real vertices only connect to dummies, not to each other
 
     int dummy_id = 0;
+    int numDummyU = 0;
+    int numDummyW = 0;
 
-    // Balance sides by adding dummy vertices
-    while (defU.size() < defW.size()) {
+    // We need: deficitU ≤ numDummyW * Delta (real U vertices connect to dummy W)
+    //          deficitW ≤ numDummyU * Delta (real W vertices connect to dummy U)
+    // Also:    numDummyU * Delta + numDummyW * Delta ≥ deficitU + deficitW
+
+    // Strategy: Add dummy vertices until we can satisfy all deficits
+    // Each dummy vertex on side X with degree Delta can absorb Delta deficit from opposite side
+
+    numDummyW = (deficitU + Delta - 1) / Delta;  // Ceiling division
+    numDummyU = (deficitW + Delta - 1) / Delta;
+
+    // Create dummy U vertices
+    for (int i = 0; i < numDummyU; ++i) {
         std::string du = "_DUMMY_U_" + std::to_string(dummy_id++);
         U.insert(du);
         adj[du] = {};
-        defU.insert(defU.end(), Delta, du);
+        degreeU[du] = 0;
     }
 
-    while (defW.size() < defU.size()) {
+    // Create dummy W vertices
+    for (int i = 0; i < numDummyW; ++i) {
         std::string dw = "_DUMMY_W_" + std::to_string(dummy_id++);
         W.insert(dw);
-        adj[dw] = {};
-        defW.insert(defW.end(), Delta, dw);
+        degreeW[dw] = 0;
     }
 
-    // Add dummy edges to fill deficits
-    for (size_t i = 0; i < defU.size(); ++i) {
-        const std::string& u = defU[i];
-        const std::string& w = defW[i];
+    // Step 4: Create deficit lists
+    // Real vertices need edges to dummies
+    // Dummy vertices need edges to reach degree Delta
+    std::vector<std::string> defU_real, defW_real;
+    std::vector<std::string> defU_dummy, defW_dummy;
+
+    for (const auto& u : U) {
+        int deficit = Delta - degreeU[u];
+        bool isDummy = (u.find("_DUMMY_U_") == 0);
+        for (int i = 0; i < deficit; ++i) {
+            if (isDummy) {
+                defU_dummy.push_back(u);
+            } else {
+                defU_real.push_back(u);
+            }
+        }
+    }
+
+    for (const auto& w : W) {
+        int deficit = Delta - degreeW[w];
+        bool isDummy = (w.find("_DUMMY_W_") == 0);
+        for (int i = 0; i < deficit; ++i) {
+            if (isDummy) {
+                defW_dummy.push_back(w);
+            } else {
+                defW_real.push_back(w);
+            }
+        }
+    }
+
+    // Step 5: Add edges - ensure no real-to-real edges
+    // Real U vertices connect to dummy W vertices
+    size_t idx = 0;
+    for (const auto& u : defU_real) {
+        if (idx < defW_dummy.size()) {
+            const std::string& w = defW_dummy[idx];
+            adj[u].push_back(w);
+            adj[w].push_back(u);
+            degreeU[u]++;
+            degreeW[w]++;
+            idx++;
+        }
+    }
+
+    // Real W vertices connect to dummy U vertices
+    idx = 0;
+    for (const auto& w : defW_real) {
+        if (idx < defU_dummy.size()) {
+            const std::string& u = defU_dummy[idx];
+            adj[u].push_back(w);
+            adj[w].push_back(u);
+            degreeU[u]++;
+            degreeW[w]++;
+            idx++;
+        }
+    }
+
+    // Remaining dummy U deficits connect to remaining dummy W deficits
+    size_t idxU = defW_real.size();  // Start after real W connections
+    size_t idxW = defU_real.size();  // Start after real U connections
+
+    while (idxU < defU_dummy.size() && idxW < defW_dummy.size()) {
+        const std::string& u = defU_dummy[idxU];
+        const std::string& w = defW_dummy[idxW];
         adj[u].push_back(w);
         adj[w].push_back(u);
+        degreeU[u]++;
+        degreeW[w]++;
+        idxU++;
+        idxW++;
+    }
+
+    // Verify the graph is now Delta-regular
+    for (const auto& u : U) {
+        assert(degreeU[u] == Delta);
+    }
+    for (const auto& w : W) {
+        assert(degreeW[w] == Delta);
     }
 }
+
 
 int color_edges(std::vector<Edge>& all_edges, const std::unordered_map<std::string, std::vector<std::string>>& adj,
                  const std::unordered_set<std::string>& U, const std::unordered_set<std::string>& W) {
@@ -196,9 +309,18 @@ int color_edges(std::vector<Edge>& all_edges, const std::unordered_map<std::stri
     std::unordered_map<std::string, std::vector<std::string>> adj_dum = adj;
     std::unordered_set<std::string> U_dum = U;
     std::unordered_set<std::string> W_dum = W;
-    int max_degree;
+    int max_degree = -1;
     regularize_bipartite(adj_dum, U_dum, W_dum, max_degree);
-    assert(U_dum.size() == W_dum.size());
+    if(max_degree == -1) {
+        std::cerr << "max_degree error" << std::endl;
+        return -1;
+    }
+    for(auto &x: U_dum) {
+        assert(adj_dum[x].size() == max_degree);
+    }
+    for(auto &x: W_dum) {
+        assert(adj_dum[x].size() == max_degree);
+    }
 
 
     std::map<std::pair<std::string, std::string>, Edge*> edge_map;
@@ -206,7 +328,7 @@ int color_edges(std::vector<Edge>& all_edges, const std::unordered_map<std::stri
         edge_map[{ed.u, ed.w}] = &ed;
     }
 
-    for (int col = 0; col <= max_degree; ++col) {
+    for (int col = 0; col < max_degree; ++col) {
         std::unordered_map<std::string, std::string> matchU, matchW;
         bipartite_matching(U_dum, adj_dum, matchU, matchW);
 
@@ -222,7 +344,7 @@ int color_edges(std::vector<Edge>& all_edges, const std::unordered_map<std::stri
             if(U.count(u) && W.count(w)) {
                 edge_map[{u, w}]->color = col;
             }
-            // Remove the edge from adj
+            // Remove the edge from adj_dum
             std::vector<std::string>& neighbors_u = adj_dum[u];
             neighbors_u.erase(std::remove(neighbors_u.begin(), neighbors_u.end(), w), neighbors_u.end());
             std::vector<std::string>& neighbors_v = adj_dum[w];
@@ -453,10 +575,6 @@ bool write_solution_to_file(
         if (edge.color >= 0) {
             color_counts[edge.color]++;
         }
-        else {
-            std::cerr << "WRONG COLOR -1" << std::endl;
-            // return 1;
-        }
     }
     if(used_colors != num_colors) {
         file <<     "  Used colors:         " << used_colors << "\n";
@@ -556,11 +674,9 @@ int main(int argc, char* argv[]) {
 
     std::string filepath = argv[1];
     std::string solutionPath = argv[2];
-    // std::string filepath = "./test_graph_30_20.txt";
-    // std::string solutionPath = "./test_graph_30_20_cpp.txt";
-
-    std::cout << "Reading graph from: " << filepath << std::endl;
-// Start total timer
+    // std::string filepath = "../test_graph_60_40.txt";
+    // std::string solutionPath = "../test_graph_60_40_cpp.txt";
+    // Start total timer
     auto start_total = std::chrono::high_resolution_clock::now();
 
     // Read graph

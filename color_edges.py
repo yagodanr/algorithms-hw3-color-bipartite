@@ -99,7 +99,7 @@ def color_edges(all_edges: list[(str, str)], adj: dict[str: list[str]], U: set[s
             adj_dum[u].remove(w)
             adj_dum[w].remove(u)
 
-            if u in U and w in W:
+            if u in U and w in W and key in all_edges:
                 edge_color[key] = color
     return max_degree, edge_color
 
