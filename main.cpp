@@ -4,12 +4,16 @@
 #include <sstream>
 #include <string>
 #include <chrono>
+#include <cassert>
 
 #include <vector>
 #include <unordered_set>
 #include <unordered_map>
 #include <map>
 #include <algorithm>
+#include <queue>
+
+const int INF = std::numeric_limits<int>::max();
 
 
 struct Edge {
@@ -19,58 +23,193 @@ struct Edge {
     Edge(std::string u, std::string w, int color=-1) : u(u), w(w), color(color) {}
 };
 
-bool dfs(const std::string& u, const std::unordered_map<std::string, std::vector<std::string>>& adj,
-         std::unordered_map<std::string, std::string>& matchU, std::unordered_map<std::string, std::string>& matchW,
-         std::unordered_map<std::string, bool>& visited) {
-    for (const std::string& w : adj.at(u)) {
-        if (visited[w]) continue;
-        visited[w] = true;
-        if (matchW.find(w) == matchW.end() || dfs(matchW[w], adj, matchU, matchW, visited)) {
-            matchU[u] = w;
-            matchW[w] = u;
-            return true;
+
+// BFS to find augmenting paths and compute levels
+bool bfs(const std::unordered_set<std::string>& U,
+         const std::unordered_map<std::string, std::vector<std::string>>& adj,
+         const std::unordered_map<std::string, std::string>& matchU,
+         const std::unordered_map<std::string, std::string>& matchW,
+         std::unordered_map<std::string, int>& dist) {
+
+    std::queue<std::string> q;
+
+    // Initialize distances and enqueue unmatched U vertices
+    for (const auto& u : U) {
+        if (matchU.find(u) == matchU.end()) {
+            dist[u] = 0;
+            q.push(u);
+        } else {
+            dist[u] = INF;
         }
     }
+
+    dist["NIL"] = INF;
+
+    // BFS to build level graph
+    while (!q.empty()) {
+        std::string u = q.front();
+        q.pop();
+
+        if (dist[u] < dist["NIL"]) {
+            // Check all adjacent vertices in W
+            auto it = adj.find(u);
+            if (it != adj.end()) {
+                for (const auto& w : it->second) {
+                    // Get the vertex matched to w (or "NIL" if unmatched)
+                    std::string matchedU = "NIL";
+                    auto matchIt = matchW.find(w);
+                    if (matchIt != matchW.end()) {
+                        matchedU = matchIt->second;
+                    }
+
+                    // If matched vertex hasn't been visited
+                    if (dist[matchedU] == INF) {
+                        dist[matchedU] = dist[u] + 1;
+                        if (matchedU != "NIL") {
+                            q.push(matchedU);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Return true if we found an augmenting path to an unmatched W vertex
+    return dist["NIL"] != INF;
+}
+
+// DFS to find and augment along a path
+bool dfs(const std::string& u,
+         const std::unordered_map<std::string, std::vector<std::string>>& adj,
+         std::unordered_map<std::string, std::string>& matchU,
+         std::unordered_map<std::string, std::string>& matchW,
+         std::unordered_map<std::string, int>& dist) {
+
+    if (u == "NIL") {
+        return true;
+    }
+
+    // Try all adjacent vertices in W
+    auto it = adj.find(u);
+    if (it != adj.end()) {
+        for (const auto& w : it->second) {
+            // Get the vertex matched to w (or "NIL" if unmatched)
+            std::string matchedU = "NIL";
+            auto matchIt = matchW.find(w);
+            if (matchIt != matchW.end()) {
+                matchedU = matchIt->second;
+            }
+
+            // Check if this edge is in the level graph and we can augment
+            if (dist[matchedU] == dist[u] + 1) {
+                if (dfs(matchedU, adj, matchU, matchW, dist)) {
+                    // Augment the matching
+                    matchU[u] = w;
+                    matchW[w] = u;
+                    return true;
+                }
+            }
+        }
+    }
+
+    // No augmenting path found from this vertex
+    dist[u] = INF;
     return false;
 }
 
-int bipartite_matching(const std::unordered_set<std::string>& U, const std::unordered_map<std::string, std::vector<std::string>>& adj,
-                       std::unordered_map<std::string, std::string>& matchU, std::unordered_map<std::string, std::string>& matchW) {
+int bipartite_matching(const std::unordered_set<std::string>& U,
+                       const std::unordered_map<std::string, std::vector<std::string>>& adj,
+                       std::unordered_map<std::string, std::string>& matchU,
+                       std::unordered_map<std::string, std::string>& matchW) {
+
     matchU.clear();
     matchW.clear();
+
     int matching = 0;
-    bool augmented;
-    do {
-        augmented = false;
-        for (const std::string& u : U) {
+    std::unordered_map<std::string, int> dist;
+
+    // Keep finding augmenting paths until none exist
+    while (bfs(U, adj, matchU, matchW, dist)) {
+        // Try to find augmenting paths from all unmatched U vertices
+        for (const auto& u : U) {
             if (matchU.find(u) == matchU.end()) {
-                std::unordered_map<std::string, bool> visited;
-                if (dfs(u, adj, matchU, matchW, visited)) {
-                    augmented = true;
+                if (dfs(u, adj, matchU, matchW, dist)) {
                     matching++;
                 }
             }
         }
-    } while (augmented);
+        dist.clear();
+    }
+
     return matching;
 }
 
-int color_edges(std::vector<Edge>& all_edges, std::unordered_map<std::string, std::vector<std::string>> adj,
-                 const std::unordered_set<std::string>& U, const std::unordered_set<std::string>& W) {
-    // for bipartite graph minimum number of colors is maximum degree
-	int max_degree = 0;
-    for (const auto& p : adj) {
-        max_degree = std::max(max_degree, static_cast<int>(p.second.size()));
+void regularize_bipartite(
+    std::unordered_map<std::string, std::vector<std::string>>& adj,
+    std::unordered_set<std::string>& U,
+    std::unordered_set<std::string>& W,
+    int& Delta
+) {
+    // Compute Δ
+    Delta = 0;
+    for (const auto& p : adj)
+        Delta = std::max(Delta, (int)p.second.size());
+
+    // Degree deficits
+    std::vector<std::string> defU, defW;
+
+    for (const auto& u : U)
+        defU.insert(defU.end(), Delta - adj[u].size(), u);
+
+    for (const auto& w : W)
+        defW.insert(defW.end(), Delta - adj[w].size(), w);
+
+    int dummy_id = 0;
+
+    // Balance sides by adding dummy vertices
+    while (defU.size() < defW.size()) {
+        std::string du = "_DUMMY_U_" + std::to_string(dummy_id++);
+        U.insert(du);
+        adj[du] = {};
+        defU.insert(defU.end(), Delta, du);
     }
+
+    while (defW.size() < defU.size()) {
+        std::string dw = "_DUMMY_W_" + std::to_string(dummy_id++);
+        W.insert(dw);
+        adj[dw] = {};
+        defW.insert(defW.end(), Delta, dw);
+    }
+
+    // Add dummy edges to fill deficits
+    for (size_t i = 0; i < defU.size(); ++i) {
+        const std::string& u = defU[i];
+        const std::string& w = defW[i];
+        adj[u].push_back(w);
+        adj[w].push_back(u);
+    }
+}
+
+int color_edges(std::vector<Edge>& all_edges, const std::unordered_map<std::string, std::vector<std::string>>& adj,
+                 const std::unordered_set<std::string>& U, const std::unordered_set<std::string>& W) {
+
+    std::unordered_map<std::string, std::vector<std::string>> adj_dum = adj;
+    std::unordered_set<std::string> U_dum = U;
+    std::unordered_set<std::string> W_dum = W;
+    int max_degree;
+    regularize_bipartite(adj_dum, U_dum, W_dum, max_degree);
+    assert(U_dum.size() == W_dum.size());
+
 
     std::map<std::pair<std::string, std::string>, Edge*> edge_map;
     for(auto &ed: all_edges) {
         edge_map[{ed.u, ed.w}] = &ed;
     }
 
-    for (int col = 0; col < max_degree; ++col) {
+    for (int col = 0; col <= max_degree; ++col) {
         std::unordered_map<std::string, std::string> matchU, matchW;
-        bipartite_matching(U, adj, matchU, matchW);
+        bipartite_matching(U_dum, adj_dum, matchU, matchW);
+
         for (const auto& p : matchU) {
             std::string u = p.first;
             std::string w = p.second;
@@ -80,13 +219,16 @@ int color_edges(std::vector<Edge>& all_edges, std::unordered_map<std::string, st
             //         break;
             //     }
             // }
-            edge_map[{u, w}]->color = col;
+            if(U.count(u) && W.count(w)) {
+                edge_map[{u, w}]->color = col;
+            }
             // Remove the edge from adj
-            std::vector<std::string>& neighbors_u = adj[u];
+            std::vector<std::string>& neighbors_u = adj_dum[u];
             neighbors_u.erase(std::remove(neighbors_u.begin(), neighbors_u.end(), w), neighbors_u.end());
-            std::vector<std::string>& neighbors_v = adj[w];
+            std::vector<std::string>& neighbors_v = adj_dum[w];
             neighbors_v.erase(std::remove(neighbors_v.begin(), neighbors_v.end(), u), neighbors_v.end());
         }
+
     }
     return max_degree;
 }
@@ -301,15 +443,25 @@ bool write_solution_to_file(
         file << "  Coloring time(seconds): " << color_time << "\n";
         file << "  Total time(seconds):    " << total_time << "\n";
     }
-    file <<     "  Minimum colors:         " << num_colors << "\n\n";
+    file <<     "  Minimum colors:         " << num_colors << "\n";
 
     // Color distribution
     std::unordered_map<int, int> color_counts;
+    int used_colors = 0;
     for (const auto& edge : all_edges) {
+        used_colors = std::max(used_colors, edge.color+1);
         if (edge.color >= 0) {
             color_counts[edge.color]++;
         }
+        else {
+            std::cerr << "WRONG COLOR -1" << std::endl;
+            // return 1;
+        }
     }
+    if(used_colors != num_colors) {
+        file <<     "  Used colors:         " << used_colors << "\n";
+    }
+    file << "\n";
 
 
     // Edge colors table
@@ -320,7 +472,7 @@ bool write_solution_to_file(
     file << "----------------------------------------------------------------------\n";
 
     // Sort edges by color, then by edge name for consistent output
-    std::vector<Edge> sorted_edges = all_edges;
+    // std::vector<Edge> sorted_edges = all_edges;
     // std::sort(sorted_edges.begin(), sorted_edges.end(),
     //     [](const Edge& a, const Edge& b) {
     //         if (a.color != b.color) return a.color < b.color;
@@ -328,7 +480,7 @@ bool write_solution_to_file(
     //         return a.w < b.w;
     //     });
 
-    for (const auto& edge : sorted_edges) {
+    for (const auto& edge : all_edges) {
         std::string edge_str = edge.u + " - " + edge.w;
         file << std::left << std::setw(30) << edge_str
              << std::right << std::setw(10) << edge.color << "\n";
@@ -404,6 +556,8 @@ int main(int argc, char* argv[]) {
 
     std::string filepath = argv[1];
     std::string solutionPath = argv[2];
+    // std::string filepath = "./test_graph_30_20.txt";
+    // std::string solutionPath = "./test_graph_30_20_cpp.txt";
 
     std::cout << "Reading graph from: " << filepath << std::endl;
 // Start total timer
